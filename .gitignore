@@ -1,0 +1,25 @@
+# Android / Gradle / Android Studio build artifacts.
+# These also MUST be excluded from OneDrive sync (see README) — OneDrive
+# syncing the build tree mid-build causes file-lock errors and slow builds.
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/app/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.keystore
+local.properties
+
+# Signing — NEVER commit. Losing keystore.jks means you can never ship an
+# update (Android rejects a differently-signed APK). Back it up somewhere safe.
+*.jks
+keystore.properties
+
+# CI staging dir
+/dist/

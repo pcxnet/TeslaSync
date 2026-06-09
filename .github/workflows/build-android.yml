@@ -1,0 +1,171 @@
+name: Build and ship Android APK
+
+# Triggers:
+#   * push to main that touches app/build inputs → automatic build + ship
+#   * manual dispatch from the Actions tab → on-demand build (fresh build
+#     number without a code change, or to test before merging)
+#
+# Each run builds a SIGNED release APK, publishes it to a GitHub Release
+# together with teslasync-app.json (version metadata). The in-app updater
+# (UpdateChecker.kt) reads that JSON from releases/latest/download and offers
+# the new APK — this requires the repo to be PUBLIC so the release assets are
+# fetchable without a token.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/build-android.yml'
+  workflow_dispatch:
+
+# One in-flight build per ref; a newer push cancels the older run.
+concurrency:
+  group: build-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build signed APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # softprops/action-gh-release creates the Release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # Provides Gradle 8.7 + caching. We invoke `gradle` (not ./gradlew) so we
+      # don't need the binary gradle-wrapper.jar committed to the repo.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      # Materialise the keystore from the base64 secret into the path
+      # build.gradle.kts expects (repo root / keystore.jks). Not committed.
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is not set. Run scripts/setup-ci-secrets.ps1 locally to generate the keystore and set all four signing secrets."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
+          ls -la keystore.jks
+
+      # Probe each signing secret independently against the keystore BEFORE
+      # gradle, because AGP's "keystore password was incorrect" is identical
+      # whether the store password, alias, or key password is the bad one.
+      - name: Verify signing credentials
+        env:
+          STORE_PW:  ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PW:    ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if ! keytool -list -keystore keystore.jks -storepass "$STORE_PW" >/dev/null 2>&1; then
+            echo "::error::ANDROID_KEYSTORE_PASSWORD does not open keystore. Re-run scripts/setup-ci-secrets.ps1."
+            exit 1
+          fi
+          if ! keytool -list -keystore keystore.jks -storepass "$STORE_PW" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
+            echo "::error::ANDROID_KEY_ALIAS '$KEY_ALIAS' not found in keystore. Aliases present:"
+            keytool -list -keystore keystore.jks -storepass "$STORE_PW" 2>/dev/null | awk -F', ' '/PrivateKeyEntry/ {print "  "$1}' >&2
+            exit 1
+          fi
+          if ! keytool -list -v -keystore keystore.jks -storepass "$STORE_PW" -alias "$KEY_ALIAS" -keypass "$KEY_PW" >/dev/null 2>&1; then
+            echo "::error::ANDROID_KEY_PASSWORD does not unlock key '$KEY_ALIAS'. Re-run scripts/setup-ci-secrets.ps1 to refresh all four signing secrets together."
+            exit 1
+          fi
+          echo "All three signing secrets verified against keystore."
+
+      # versionName = YYYY.MM.DD.RUN_NUMBER, versionCode = run_number (monotonic).
+      # build.gradle.kts reads these from env. The same display string goes into
+      # teslasync-app.json so the in-app updater compares versionCode cleanly.
+      - name: Compute Android version
+        id: ver
+        run: |
+          DATE=$(date -u +%Y.%m.%d)
+          N="${{ github.run_number }}"
+          echo "name=${DATE}.${N}" >> "$GITHUB_OUTPUT"
+          echo "code=${N}"         >> "$GITHUB_OUTPUT"
+          echo "Computed APK version: name=${DATE}.${N} code=${N}"
+
+      # Signing creds go straight to gradle via env (read by build.gradle.kts),
+      # never via keystore.properties — Java's Properties.load() mangles
+      # backslashes / \u#### in passwords and breaks signing.
+      - name: Build signed release APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_VERSION_NAME:      ${{ steps.ver.outputs.name }}
+          ANDROID_VERSION_CODE:      ${{ steps.ver.outputs.code }}
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Dump gradle build report on failure
+        if: failure()
+        run: |
+          echo "::group::app/build/reports"
+          find app/build/reports -type f 2>/dev/null | while read -r f; do
+            echo "--- $f ---"; cat "$f"
+          done || true
+          echo "::endgroup::"
+
+      # Rename to the asset names the in-app updater fetches, and write the
+      # metadata JSON (version, versionCode, sha256, size, builtAt, commit).
+      - name: Stage APK + metadata
+        id: stage
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/teslasync.apk
+          VERSION="${{ steps.ver.outputs.name }}"
+          VERSION_CODE="${{ steps.ver.outputs.code }}"
+          SHA256=$(sha256sum dist/teslasync.apk | awk '{print $1}')
+          SIZE=$(stat -c %s dist/teslasync.apk)
+          BUILT_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          cat > dist/teslasync-app.json <<EOF
+          {
+            "version": "$VERSION",
+            "versionCode": $VERSION_CODE,
+            "sha256": "$SHA256",
+            "sizeBytes": $SIZE,
+            "builtAt": "$BUILT_AT",
+            "commit": "$GITHUB_SHA"
+          }
+          EOF
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256"   >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE"       >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}"  >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.stage.outputs.tag }}
+          name: TeslaSync ${{ steps.stage.outputs.version }} (build ${{ github.run_number }})
+          body: |
+            **Version:** ${{ steps.stage.outputs.version }}
+            **Build:** ${{ github.run_number }}
+            **Commit:** ${{ github.sha }}
+            **SHA-256:** `${{ steps.stage.outputs.sha256 }}`
+            **Size:** ${{ steps.stage.outputs.size }} bytes
+
+            Built automatically by GitHub Actions. The app's in-app updater fetches this APK from releases/latest/download.
+          files: |
+            dist/teslasync.apk
+            dist/teslasync-app.json
+          generate_release_notes: false
+          fail_on_unmatched_files: true

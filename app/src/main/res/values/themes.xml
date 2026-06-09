@@ -1,0 +1,6 @@
+<resources>
+    <!-- Window theme only. The Compose UI handles light/dark via TeslaSyncTheme;
+         this just needs to be a valid, action-bar-less window theme that doesn't pull in
+         the Material Components (Views) dependency. -->
+    <style name="Theme.TeslaSync" parent="@android:style/Theme.Material.Light.NoActionBar" />
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Where ApkInstaller downloads the update APK before handing it to the
+         system package installer via FileProvider. -->
+    <cache-path name="apk" path="apk/" />
+</paths>

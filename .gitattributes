@@ -1,0 +1,10 @@
+# Normalize line endings: LF in the repo for everything (so the CI YAML and
+# shell snippets run correctly on the Linux runner), CRLF only for Windows .bat.
+* text=auto eol=lf
+*.bat text eol=crlf
+
+# Binary types — never normalize.
+*.jar binary
+*.png binary
+*.jks binary
+*.keystore binary
