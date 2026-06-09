@@ -30,6 +30,12 @@
     <!-- Self-update: install the downloaded APK from a GitHub Release. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Required to call CompanionDeviceManager (Bluetooth auto-arm). required=false so the
+         app still installs on devices that lack it — manual arm is the fallback. -->
+    <uses-feature
+        android:name="android.software.companion_device_setup"
+        android:required="false" />
+
     <!-- Android 11+ package visibility so we can detect whether Waze is installed. -->
     <queries>
         <package android:name="com.waze" />

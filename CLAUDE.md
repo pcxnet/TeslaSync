@@ -57,6 +57,7 @@ MainActivity.kt
   onDeviceDisappeared` (the framework's API-33 `AssociationInfo` default delegates to them),
   which avoids referencing the API-33 `AssociationInfo` type on older devices. Auto-arm needs
   **API 31+**; manual arm is the always-works fallback (that's why the design has both).
+  **Gotcha:** the manifest MUST declare `<uses-feature android:name="android.software.companion_device_setup" android:required="false"/>` or `associate()` throws *"must declare uses-feature … to use this API"* (crashed v3–v5; fixed by adding it).
 - **`active_route_*` only exists when a route is set**, and the car must be awake (Tessie's
   cached read avoids waking it). The poll loop treats null/empty/asleep as "no destination" and
   never crashes — it logs and continues.
