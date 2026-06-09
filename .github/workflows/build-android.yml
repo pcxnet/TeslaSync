@@ -13,9 +13,15 @@ name: Build and ship Android APK
 on:
   push:
     branches: [main]
+    # Only build/ship when something that actually ends up IN the APK changes.
+    # Deliberately NOT listed (so they never trigger a build or a new release):
+    # *.md docs, CLAUDE.md, README.md, docs/**, scripts/**, .gitignore,
+    # .gitattributes, and unit tests under app/src/test/** (tests aren't packaged).
     paths:
-      - 'app/**'
-      - 'gradle/**'
+      - 'app/src/main/**'        # Kotlin sources, res, manifest — the APK contents
+      - 'app/build.gradle.kts'   # deps, signing, version, buildConfig
+      - 'app/proguard-rules.pro'
+      - 'gradle/**'              # version catalog + wrapper props
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradle.properties'
