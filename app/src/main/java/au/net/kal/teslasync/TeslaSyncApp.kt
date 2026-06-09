@@ -7,6 +7,7 @@ import android.os.Build
 import androidx.core.content.getSystemService
 import au.net.kal.teslasync.bluetooth.CarCompanionManager
 import au.net.kal.teslasync.data.SettingsRepository
+import au.net.kal.teslasync.util.CrashReporter
 
 /**
  * Application entry point. Creates the two notification channels up front, and re-arms
@@ -16,6 +17,7 @@ class TeslaSyncApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        CrashReporter.install(this)   // first, so it catches any early crash
         createNotificationChannels()
         rearmPresenceObservation()
     }

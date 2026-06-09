@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -99,6 +100,10 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
                 onInstall = { vm.installUpdate() },
                 onDismiss = { vm.dismissUpdate() },
             )
+        }
+
+        vm.crashReport?.let { report ->
+            CrashReportCard(report = report, onDismiss = { vm.clearCrashReport() })
         }
 
         vm.message?.let { msg ->
@@ -259,6 +264,32 @@ private fun UpdateBanner(
 }
 
 @Composable
+private fun CrashReportCard(report: String, onDismiss: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                "Last crash — long-press to select & copy, then send it over",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Spacer(Modifier.height(6.dp))
+            SelectionContainer {
+                Text(
+                    report.take(3000),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onDismiss) { Text("Dismiss") }
+        }
+    }
+}
+
+@Composable
 private fun SwitchRow(
     label: String,
     checked: Boolean,
@@ -281,7 +312,13 @@ private fun launchCarPicker(
     onError: (CharSequence) -> Unit,
 ) {
     companion.requestCarSelection(
-        onChooserReady = { sender -> chooser.launch(IntentSenderRequest.Builder(sender).build()) },
+        onChooserReady = { sender ->
+            try {
+                chooser.launch(IntentSenderRequest.Builder(sender).build())
+            } catch (e: Exception) {
+                onError("Couldn't show the Bluetooth picker: ${e.message ?: e.javaClass.simpleName}")
+            }
+        },
         onError = onError,
     )
 }

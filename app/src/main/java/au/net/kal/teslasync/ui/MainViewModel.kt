@@ -13,6 +13,7 @@ import au.net.kal.teslasync.data.VehicleSummary
 import au.net.kal.teslasync.update.ApkInstaller
 import au.net.kal.teslasync.update.UpdateChecker
 import au.net.kal.teslasync.update.UpdateInfo
+import au.net.kal.teslasync.util.CrashReporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,6 +27,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val settings = SettingsRepository(app)
     private val tessie = TessieClient()
+
+    // If the app crashed last run, surface the captured stack trace once.
+    var crashReport by mutableStateOf<String?>(null)
+        private set
+
+    init {
+        crashReport = CrashReporter.consume(app)
+    }
 
     var token by mutableStateOf(settings.tessieToken.orEmpty())
         private set
@@ -74,6 +83,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearMessage() { message = null }
+
+    fun clearCrashReport() { crashReport = null }
 
     fun loadVehicles() {
         val t = token.trim()

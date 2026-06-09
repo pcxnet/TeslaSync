@@ -42,22 +42,29 @@ class CarCompanionManager(context: Context) {
             .setSingleDevice(false)
             .build()
 
-        @Suppress("DEPRECATION")
-        manager.associate(
-            request,
-            object : CompanionDeviceManager.Callback() {
-                @Deprecated("Deprecated in API 33; still invoked by the legacy associate() path.")
-                @Suppress("OVERRIDE_DEPRECATION")
-                override fun onDeviceFound(chooserLauncher: IntentSender) {
-                    onChooserReady(chooserLauncher)
-                }
+        // associate() can throw synchronously (Bluetooth off, device-state/OEM quirks) — if
+        // it does, surface the reason instead of hard-crashing the app.
+        try {
+            @Suppress("DEPRECATION")
+            manager.associate(
+                request,
+                object : CompanionDeviceManager.Callback() {
+                    @Deprecated("Deprecated in API 33; still invoked by the legacy associate() path.")
+                    @Suppress("OVERRIDE_DEPRECATION")
+                    override fun onDeviceFound(chooserLauncher: IntentSender) {
+                        onChooserReady(chooserLauncher)
+                    }
 
-                override fun onFailure(error: CharSequence?) {
-                    onError(error ?: "Bluetooth association failed")
-                }
-            },
-            null,
-        )
+                    override fun onFailure(error: CharSequence?) {
+                        onError(error ?: "Bluetooth association failed")
+                    }
+                },
+                null,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "associate() threw", e)
+            onError("Couldn't open the Bluetooth picker: ${e.message ?: e.javaClass.simpleName}")
+        }
     }
 
     /**
