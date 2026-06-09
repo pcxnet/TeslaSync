@@ -12,8 +12,10 @@
     4. Sets the GitHub Actions secrets: ANDROID_KEYSTORE_BASE64,
        ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.
 
-  Requirements: gh CLI authenticated (gh auth status), and a JDK/keytool
-  (installing Android Studio provides one at jbr\bin\keytool.exe).
+  Requirements: gh CLI authenticated (gh auth status), and EITHER keytool (any
+  JDK) OR openssl (bundled with Git for Windows at usr\bin\openssl.exe). On
+  Windows-on-ARM with no JDK/Android Studio, the OpenSSL path is used
+  automatically and produces a PKCS12 keystore the CI + Android signer accept.
 
   *** BACK UP keystore.jks + keystore.properties somewhere safe. ***
   If you lose them you cannot ship another update — Android only accepts an
@@ -33,16 +35,40 @@ $jksPath    = Join-Path $repoRoot 'keystore.jks'
 $propsPath  = Join-Path $repoRoot 'keystore.properties'
 
 function Find-Keytool {
-    $candidates = @(
+    @(
         (Get-Command keytool -ErrorAction SilentlyContinue).Source,
         (Join-Path $env:JAVA_HOME 'bin\keytool.exe'),
         'C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe',
         (Join-Path $env:LOCALAPPDATA 'Programs\Android Studio\jbr\bin\keytool.exe')
-    ) | Where-Object { $_ -and (Test-Path $_) }
-    if (-not $candidates) {
-        throw "keytool not found. Install Android Studio (it ships a JDK at jbr\bin\keytool.exe) or set JAVA_HOME, then re-run."
-    }
-    return $candidates[0]
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
+
+function Find-OpenSsl {
+    @(
+        (Get-Command openssl -ErrorAction SilentlyContinue).Source,
+        'C:\Program Files\Git\usr\bin\openssl.exe',
+        'C:\Program Files\Git\mingw64\bin\openssl.exe'
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
+
+# Build a PKCS12 keystore with OpenSSL (no JDK needed). JDK 17 + Android's
+# signer read PKCS12 fine; key password == store password (PKCS12 convention).
+function New-KeystoreWithOpenSsl($ossl, $out, $alias, $pw) {
+    $env:MSYS_NO_PATHCONV = '1'   # stop Git/MSYS mangling the -subj "/CN=..." string
+    $keyPem  = Join-Path $env:TEMP 'tsk_key.pem'
+    $certPem = Join-Path $env:TEMP 'tsk_cert.pem'
+    & $ossl req -x509 -newkey rsa:2048 -keyout $keyPem -out $certPem -days 10000 -nodes -subj "/CN=TeslaSync/OU=pcxnet/O=pcxnet/C=AU" 2>&1 | Out-Null
+    & $ossl pkcs12 -export -inkey $keyPem -in $certPem -out $out -name $alias -passout "pass:$pw" 2>&1 | Out-Null
+    [System.IO.File]::Delete($keyPem)
+    [System.IO.File]::Delete($certPem)
+}
+
+function New-KeystoreWithKeytool($keytool, $out, $alias, $pw) {
+    & $keytool -genkeypair -v -keystore $out -alias $alias `
+        -keyalg RSA -keysize 2048 -validity 10000 `
+        -storepass $pw -keypass $pw `
+        -dname "CN=TeslaSync, OU=pcxnet, O=pcxnet, C=AU"
+    if ($LASTEXITCODE -ne 0) { throw "keytool failed to generate the keystore." }
 }
 
 function New-StrongPassword {
@@ -53,9 +79,6 @@ function New-StrongPassword {
 # Confirm gh is authenticated.
 gh auth status 1>$null 2>$null
 if ($LASTEXITCODE -ne 0) { throw "gh is not authenticated. Run 'gh auth login' first." }
-
-$keytool = Find-Keytool
-Write-Host "Using keytool: $keytool"
 
 # Re-use existing credentials so the key stays stable across re-runs.
 if (Test-Path $propsPath) {
@@ -71,16 +94,19 @@ if (Test-Path $propsPath) {
     $keyPw   = $storePw   # one password for store + key keeps CI verification simple
 }
 
-# Generate the keystore if it doesn't exist yet.
+# Generate the keystore if missing (re-use it otherwise so the signing key stays stable).
 if (-not (Test-Path $jksPath)) {
-    Write-Host "Generating new keystore at $jksPath (alias '$Alias')..."
-    & $keytool -genkeypair -v `
-        -keystore $jksPath `
-        -alias $Alias `
-        -keyalg RSA -keysize 2048 -validity 10000 `
-        -storepass $storePw -keypass $keyPw `
-        -dname "CN=TeslaSync, OU=pcxnet, O=pcxnet, L=, S=, C=AU"
-    if ($LASTEXITCODE -ne 0) { throw "keytool failed to generate the keystore." }
+    $keytool = Find-Keytool
+    $ossl    = Find-OpenSsl
+    if ($keytool) {
+        Write-Host "Generating keystore with keytool: $keytool"
+        New-KeystoreWithKeytool $keytool $jksPath $Alias $storePw
+    } elseif ($ossl) {
+        Write-Host "No JDK/keytool found — generating PKCS12 keystore with OpenSSL: $ossl"
+        New-KeystoreWithOpenSsl $ossl $jksPath $Alias $storePw
+    } else {
+        throw "Neither keytool nor openssl found. Install a JDK, or Git for Windows (it bundles openssl), then re-run."
+    }
 } else {
     Write-Host "Re-using existing keystore at $jksPath."
 }

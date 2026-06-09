@@ -88,7 +88,8 @@ coroutines 1.8.1 · security-crypto 1.1.0-alpha06. JDK 17.
 - **Signing**: `app/build.gradle.kts` reads creds from env (CI) or `keystore.properties` (local).
   CI passes them as env (NOT a properties file) to dodge Java `Properties.load()` mangling
   backslashes/`\u####`. `scripts/setup-ci-secrets.ps1` generates `keystore.jks` and sets the four
-  Actions secrets. **The keystore must be backed up** — losing it blocks all future updates.
+  Actions secrets — uses keytool if a JDK is present, else OpenSSL (PKCS12), so it works on
+  Windows-on-ARM with no JDK/Android Studio (the live keystore was made this way). **The keystore must be backed up** — losing it blocks all future updates.
 - **Repo is PUBLIC** so `releases/latest/download` is tokenless. No secrets in the repo.
 - Why GitHub Releases not cPanel (PeptideTrack's path): PeptideTrack's APK is a web-shell that
   needs its server anyway; TeslaSync is fully native and has none, so Releases is the no-server
