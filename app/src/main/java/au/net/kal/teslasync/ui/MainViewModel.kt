@@ -61,9 +61,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         settings.vin = value.trim()
     }
 
-    fun setAutoArm(value: Boolean) { autoArm = value; settings.autoArmOnBluetooth = value }
+    // NB: not named setAutoArm/setFireOnArm — those JVM signatures collide with the
+    // generated setters of the `autoArm`/`fireOnArm` state properties (platform clash).
+    fun onAutoArmChanged(value: Boolean) { autoArm = value; settings.autoArmOnBluetooth = value }
 
-    fun setFireOnArm(value: Boolean) { fireOnArm = value; settings.fireOnArm = value }
+    fun onFireOnArmChanged(value: Boolean) { fireOnArm = value; settings.fireOnArm = value }
 
     fun onCarBtAddress(address: String?) {
         carBtAddress = address

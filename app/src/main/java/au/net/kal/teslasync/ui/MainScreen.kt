@@ -151,14 +151,14 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
             checked = vm.autoArm,
             enabled = autoArmSupported,
         ) { checked ->
-            vm.setAutoArm(checked)
+            vm.onAutoArmChanged(checked)
             // Keep presence observation in sync with the toggle.
             vm.carBtAddress?.takeIf { autoArmSupported && it.isNotBlank() }?.let { addr ->
                 if (checked) companion.startObservingPresence(addr) else companion.stopObservingPresence(addr)
             }
         }
         SwitchRow("Fire if a destination is already set at arm time", vm.fireOnArm) {
-            vm.setFireOnArm(it)
+            vm.onFireOnArmChanged(it)
         }
         Spacer(Modifier.height(8.dp))
         Text(
