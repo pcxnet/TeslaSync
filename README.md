@@ -44,7 +44,8 @@ external dependency is a Tessie subscription.
   and never wakes the car.
 - **Waze** installed on the phone.
 - **Android Studio** (Koala/2024.1+ recommended) to build, and an Android phone (Android 8.0 /
-  API 26 minimum; **Bluetooth auto‑arm needs Android 12 / API 31+**).
+  API 26 minimum). **Pair your phone with the car's Bluetooth first** (normal Android
+  Settings pairing) — the app picks the car from your already‑paired devices.
 
 ## Step 0 — prove the Tesla side first (5 minutes, do this before building)
 
@@ -80,8 +81,10 @@ If the JSON envelope differs from what the app expects, adjust the DTOs in
 1. **Tessie token** — paste it, tap *Save token*, then *Load vehicles*.
 2. **Vehicle** — pick your car from the list (or type the VIN).
 3. **Arming**
-   - *Auto‑arm on car Bluetooth* (default on) — tap **Choose car Bluetooth** and pick your
-     Tesla in the system dialog. The app then watches for that device automatically.
+   - *Auto‑arm on car Bluetooth* (default on) — tap **Choose car Bluetooth (paired
+     devices)** and pick your Tesla from the list of devices already paired with the phone.
+     The app then arms/disarms automatically when the phone connects to / disconnects from
+     the car.
    - *Fire if a destination is already set at arm time* (default on).
 4. **Permissions** — grant notifications when prompted; tap *Allow display over other apps*
    (so Waze opens with a single GO tap instead of a notification tap), and *Disable battery
@@ -105,7 +108,7 @@ If the JSON envelope differs from what the app expects, adjust the DTOs in
 |---|---|
 | Nothing happens when I set a destination | Car must be awake & a route actually set. Check the foreground notification text; check the token/VIN. |
 | Waze shows the wrong location | lat/lon reversed — check `active_route_*` values from Step 0. |
-| Auto‑arm never fires | Needs Android 12+, the car chosen via *Choose car Bluetooth*, and battery optimisation disabled. Manual *Start watching* always works. |
+| Auto‑arm never fires | The car must be paired with the phone AND chosen via *Choose car Bluetooth*, with battery optimisation disabled (Android 12+ blocks background starts otherwise — you'd see a "tap to start watching" notification instead). Manual *Start watching* always works. |
 | Watcher stops overnight / mid‑drive | Disable battery optimisation for TeslaSync (Samsung/Xiaomi/etc. are aggressive). |
 | Waze opens but doesn't auto‑navigate | Expected — tap **GO** (Waze removed auto‑start in Jan 2025). |
 

@@ -147,16 +147,20 @@ class DestinationWatcherService : LifecycleService() {
         private const val TAG = "DestWatcher"
         private const val FGS_ID = 1001
 
-        /** Start the watcher as a foreground service. Safe to call when already running. */
-        fun start(context: Context) {
+        /**
+         * Start the watcher as a foreground service. Safe to call when already running.
+         * Returns false if the OS blocked the start (Android 12+ background restriction —
+         * e.g. auto-arm fired while the app had no exemption); the caller can fall back to
+         * a tap-to-arm notification.
+         */
+        fun start(context: Context): Boolean {
             val intent = Intent(context, DestinationWatcherService::class.java)
-            try {
+            return try {
                 ContextCompat.startForegroundService(context, intent)
+                true
             } catch (e: Exception) {
-                // e.g. ForegroundServiceStartNotAllowedException if started from a
-                // disallowed background state. Auto-arm runs inside CompanionDeviceService,
-                // which is an allowed state; manual arm runs from the foreground.
-                Log.w(TAG, "Could not start foreground service", e)
+                Log.w(TAG, "Could not start foreground service: ${e.message}")
+                false
             }
         }
 

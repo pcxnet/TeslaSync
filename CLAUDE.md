@@ -20,8 +20,8 @@ service/     DestinationStateMachine.kt  pure fire/dedup logic (unit-tested)
              WazeUrl.kt        pure deep-link builder (unit-tested)
              WazeLauncher.kt   Intent vs heads-up-notification launch tiers
              DestinationWatcherService.kt  LifecycleService + coroutine poll loop
-bluetooth/   CarCompanionManager.kt  CompanionDeviceManager associate + observe presence
-             CarPresenceService.kt   CompanionDeviceService -> auto arm/disarm
+bluetooth/   BondedDevices.kt        list the phone's paired devices (car picker)
+             CarBluetoothReceiver.kt manifest receiver: ACL connect/disconnect -> arm/disarm
 update/      UpdateChecker.kt   poll GitHub Releases for a newer versionCode
              ApkInstaller.kt    download + SHA-256 verify + FileProvider install
              UpdateModels.kt    AppMetadata (teslasync-app.json) + UpdateInfo
@@ -50,14 +50,21 @@ MainActivity.kt
   from the background on Android 10+ unless we hold SYSTEM_ALERT_WINDOW ("Display over other
   apps"). `WazeLauncher` launches directly if that's granted, else posts a heads-up
   notification the user taps. The "one tap GO" vs "tap notification then GO" UX depends on this.
-- **Bluetooth auto-arm = CompanionDeviceManager, not a BroadcastReceiver.** A manifest
-  `ACTION_ACL_CONNECTED` receiver does NOT get background-launch privilege on Android 12+.
-  CDM `associate()` + `startObservingDevicePresence()` + a `CompanionDeviceService` is the
-  sanctioned path. `CarPresenceService` overrides only the **String** `onDeviceAppeared/
-  onDeviceDisappeared` (the framework's API-33 `AssociationInfo` default delegates to them),
-  which avoids referencing the API-33 `AssociationInfo` type on older devices. Auto-arm needs
-  **API 31+**; manual arm is the always-works fallback (that's why the design has both).
-  **Gotcha:** the manifest MUST declare `<uses-feature android:name="android.software.companion_device_setup" android:required="false"/>` or `associate()` throws *"must declare uses-feature … to use this API"* (crashed v3–v5; fixed by adding it).
+- **Bluetooth auto-arm = paired-device picker + ACL broadcast receiver (CDM was removed).**
+  We first built this on CompanionDeviceManager and it failed on-device for a fundamental
+  reason: **CDM's picker SCANS for nearby discoverable devices, and an already-paired car is
+  not discoverable outside pairing mode** — the Tesla never appeared (user-confirmed, v6).
+  Current design: the picker lists `BluetoothAdapter.bondedDevices` (the phone's paired
+  devices); the chosen MAC is saved; a manifest-declared `CarBluetoothReceiver` gets
+  `ACTION_ACL_CONNECTED/_DISCONNECTED` (both on the implicit-broadcast exception list, so
+  they're delivered without the app running) and starts/stops the watcher. Works on API 26+.
+  - **FGS-from-background nuance (Android 12+):** receiving a Bluetooth broadcast is NOT an
+    FGS background-start exemption (verified against the official exemption list — don't
+    trust memory on this). The starts succeed because the app prompts for the
+    battery-optimization exemption and/or SYSTEM_ALERT_WINDOW (both ARE exemptions). If the
+    start is still blocked, the receiver posts a high-priority "tap to start watching"
+    notification — a notification tap is always exempt (`PendingIntent.getForegroundService`).
+  - `DestinationWatcherService.start()` returns Boolean so the receiver knows to fall back.
 - **`active_route_*` only exists when a route is set**, and the car must be awake (Tessie's
   cached read avoids waking it). The poll loop treats null/empty/asleep as "no destination" and
   never crashes — it logs and continues.

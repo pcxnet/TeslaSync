@@ -3,15 +3,14 @@ package au.net.kal.teslasync
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.os.Build
 import androidx.core.content.getSystemService
-import au.net.kal.teslasync.bluetooth.CarCompanionManager
-import au.net.kal.teslasync.data.SettingsRepository
 import au.net.kal.teslasync.util.CrashReporter
 
 /**
- * Application entry point. Creates the two notification channels up front, and re-arms
- * Bluetooth presence observation so auto-arm keeps working after an OS kill or reboot.
+ * Application entry point. Creates the two notification channels up front so the
+ * foreground service and the "navigate"/"tap to arm" notifications always have a channel.
+ * (Auto-arm needs no re-arming here: CarBluetoothReceiver is manifest-declared, so the
+ * system delivers the car's connect/disconnect broadcasts without the app running.)
  */
 class TeslaSyncApp : Application() {
 
@@ -19,7 +18,6 @@ class TeslaSyncApp : Application() {
         super.onCreate()
         CrashReporter.install(this)   // first, so it catches any early crash
         createNotificationChannels()
-        rearmPresenceObservation()
     }
 
     private fun createNotificationChannels() {
@@ -38,20 +36,6 @@ class TeslaSyncApp : Application() {
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply { description = "Tap to open Waze when a new destination is detected." }
         )
-    }
-
-    /**
-     * CompanionDeviceManager presence observation may not survive a reboot. Re-register it on
-     * every process start when auto-arm is enabled and a car has been chosen, so the system
-     * keeps waking CarPresenceService when the car's Bluetooth appears.
-     */
-    private fun rearmPresenceObservation() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        val settings = SettingsRepository(this)
-        val address = settings.carBluetoothAddress
-        if (settings.autoArmOnBluetooth && !address.isNullOrBlank()) {
-            CarCompanionManager(this).startObservingPresence(address)
-        }
     }
 
     companion object {

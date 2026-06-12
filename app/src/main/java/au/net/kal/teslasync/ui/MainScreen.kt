@@ -6,7 +6,6 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -41,33 +40,24 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import au.net.kal.teslasync.BuildConfig
-import au.net.kal.teslasync.bluetooth.CarCompanionManager
 import au.net.kal.teslasync.service.DestinationWatcherService
 
 @Composable
 fun MainScreen(vm: MainViewModel = viewModel()) {
     val context = LocalContext.current
-    val companion = remember { CarCompanionManager(context) }
     var armed by remember { mutableStateOf(false) }
-    // Auto-arm relies on CompanionDeviceService, which needs Android 12 (API 31+).
-    val autoArmSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-
-    // CompanionDeviceManager device picker result -> save the chosen car's MAC.
-    val chooseCar = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        vm.onCarBtAddress(companion.onCarSelected(result.data))
-    }
 
     val requestNotif = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* no-op: notifications just won't show if denied */ }
 
+    // BLUETOOTH_CONNECT (runtime on Android 12+) is needed to read the paired-device list
+    // and to receive the car's connect/disconnect broadcasts for auto-arm.
     val requestBt = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) launchCarPicker(companion, chooseCar) { vm.message = it.toString() }
-        else vm.message = "Bluetooth permission needed to pick the car"
+        if (granted) vm.loadBondedDevices()
+        else vm.message = "Bluetooth permission needed to list paired devices"
     }
 
     // Ask for notification permission once (Android 13+); the foreground service needs it.
@@ -151,36 +141,37 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
 
         // 3. Arming ----------------------------------------------------------
         Section("3. Arming")
-        SwitchRow(
-            label = "Auto-arm when phone connects to car Bluetooth",
-            checked = vm.autoArm,
-            enabled = autoArmSupported,
-        ) { checked ->
-            vm.onAutoArmChanged(checked)
-            // Keep presence observation in sync with the toggle.
-            vm.carBtAddress?.takeIf { autoArmSupported && it.isNotBlank() }?.let { addr ->
-                if (checked) companion.startObservingPresence(addr) else companion.stopObservingPresence(addr)
-            }
+        SwitchRow("Auto-arm when phone connects to car Bluetooth", vm.autoArm) {
+            vm.onAutoArmChanged(it)
         }
         SwitchRow("Fire if a destination is already set at arm time", vm.fireOnArm) {
             vm.onFireOnArmChanged(it)
         }
         Spacer(Modifier.height(8.dp))
         Text(
-            vm.carBtAddress?.let { "Car Bluetooth: $it" } ?: "No car Bluetooth chosen yet",
+            vm.carBtAddress?.let { addr -> "Car: ${vm.carBtName ?: addr} ($addr)" }
+                ?: "No car Bluetooth chosen yet",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (autoArmSupported) {
-            OutlinedButton(
-                enabled = companion.isSupported,
-                onClick = { requestBt.launch(Manifest.permission.BLUETOOTH_CONNECT) },
-            ) { Text("Choose car Bluetooth") }
-        } else {
+        OutlinedButton(
+            onClick = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    requestBt.launch(Manifest.permission.BLUETOOTH_CONNECT)
+                } else {
+                    vm.loadBondedDevices()
+                }
+            },
+        ) { Text("Choose car Bluetooth (paired devices)") }
+        vm.bondedDevices.forEach { device ->
             Text(
-                "Auto-arm needs Android 12+. Use “Start watching now” below.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = "${device.name} — ${device.address}",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { vm.onCarPicked(device) }
+                    .padding(vertical = 10.dp),
             )
         }
 
@@ -304,23 +295,6 @@ private fun SwitchRow(
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
-}
-
-private fun launchCarPicker(
-    companion: CarCompanionManager,
-    chooser: androidx.activity.result.ActivityResultLauncher<IntentSenderRequest>,
-    onError: (CharSequence) -> Unit,
-) {
-    companion.requestCarSelection(
-        onChooserReady = { sender ->
-            try {
-                chooser.launch(IntentSenderRequest.Builder(sender).build())
-            } catch (e: Exception) {
-                onError("Couldn't show the Bluetooth picker: ${e.message ?: e.javaClass.simpleName}")
-            }
-        },
-        onError = onError,
-    )
 }
 
 private fun openOverlaySettings(context: android.content.Context) {

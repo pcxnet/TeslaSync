@@ -12,14 +12,10 @@
     <!-- Post the persistent + "navigate" notifications (runtime prompt on Android 13+). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Read bonded Bluetooth devices and observe the car's presence. -->
+    <!-- List paired Bluetooth devices + receive the car's connect/disconnect broadcasts. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <!-- Legacy Bluetooth permission for reading the device address on API <= 30. -->
+    <!-- Legacy Bluetooth permission for the same on API <= 30. -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-
-    <!-- CompanionDeviceManager: run in background + start FGS when the car appears. -->
-    <uses-permission android:name="android.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND" />
-    <uses-permission android:name="android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND" />
 
     <!-- Optional: lets the service launch Waze directly (no notification tap). -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -29,12 +25,6 @@
 
     <!-- Self-update: install the downloaded APK from a GitHub Release. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-
-    <!-- Required to call CompanionDeviceManager (Bluetooth auto-arm). required=false so the
-         app still installs on devices that lack it — manual arm is the fallback. -->
-    <uses-feature
-        android:name="android.software.companion_device_setup"
-        android:required="false" />
 
     <!-- Android 11+ package visibility so we can detect whether Waze is installed. -->
     <queries>
@@ -67,16 +57,17 @@
             android:exported="false"
             android:foregroundServiceType="dataSync|connectedDevice" />
 
-        <!-- CompanionDeviceService: system calls onDeviceAppeared/Disappeared
-             for the car's Bluetooth device (auto-arm). Bound by the system. -->
-        <service
-            android:name=".bluetooth.CarPresenceService"
-            android:exported="true"
-            android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE">
+        <!-- Auto-arm: the system delivers Bluetooth connect/disconnect broadcasts here even
+             when the app isn't running (ACL_* are on the implicit-broadcast exception list).
+             Both actions are protected broadcasts (system-only senders), so exported is safe. -->
+        <receiver
+            android:name=".bluetooth.CarBluetoothReceiver"
+            android:exported="true">
             <intent-filter>
-                <action android:name="android.companion.CompanionDeviceService" />
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
             </intent-filter>
-        </service>
+        </receiver>
 
         <!-- Serves the downloaded update APK to the system installer. -->
         <provider

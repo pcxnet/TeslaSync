@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import au.net.kal.teslasync.bluetooth.BondedDevices
 import au.net.kal.teslasync.data.SettingsRepository
 import au.net.kal.teslasync.data.TessieClient
 import au.net.kal.teslasync.data.TessieParser
@@ -44,6 +45,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var carBtAddress by mutableStateOf(settings.carBluetoothAddress)
         private set
+    var carBtName by mutableStateOf(settings.carBluetoothName)
+        private set
+    var bondedDevices by mutableStateOf<List<BondedDevices.Entry>>(emptyList())
+        private set
     var autoArm by mutableStateOf(settings.autoArmOnBluetooth)
         private set
     var fireOnArm by mutableStateOf(settings.fireOnArm)
@@ -76,10 +81,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onFireOnArmChanged(value: Boolean) { fireOnArm = value; settings.fireOnArm = value }
 
-    fun onCarBtAddress(address: String?) {
-        carBtAddress = address
-        settings.carBluetoothAddress = address
-        message = if (address != null) "Car Bluetooth saved" else "Couldn't read the selected device"
+    /** Loads the phone's paired devices for the car picker (call after BLUETOOTH_CONNECT). */
+    fun loadBondedDevices() {
+        val list = BondedDevices.list(getApplication())
+        bondedDevices = list
+        if (list.isEmpty()) {
+            message = "No paired Bluetooth devices found — pair the car in Android Settings first"
+        }
+    }
+
+    fun onCarPicked(device: BondedDevices.Entry) {
+        carBtAddress = device.address
+        carBtName = device.name
+        settings.carBluetoothAddress = device.address
+        settings.carBluetoothName = device.name
+        bondedDevices = emptyList()   // collapse the picker list
+        message = "Car Bluetooth saved: ${device.name}"
     }
 
     fun clearMessage() { message = null }

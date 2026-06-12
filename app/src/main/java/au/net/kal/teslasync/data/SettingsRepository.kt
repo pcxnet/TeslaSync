@@ -20,10 +20,15 @@ class SettingsRepository(context: Context) {
         get() = prefs.getString(KEY_VIN, null)
         set(value) { prefs.edit().putString(KEY_VIN, value).apply() }
 
-    /** Bluetooth MAC of the car, chosen via CompanionDeviceManager, for auto-arm. */
+    /** Bluetooth MAC of the car (picked from the phone's paired devices), for auto-arm. */
     var carBluetoothAddress: String?
         get() = prefs.getString(KEY_BT_ADDR, null)
         set(value) { prefs.edit().putString(KEY_BT_ADDR, value).apply() }
+
+    /** Display name of the chosen car Bluetooth device (cosmetic, shown in the UI). */
+    var carBluetoothName: String?
+        get() = prefs.getString(KEY_BT_NAME, null)
+        set(value) { prefs.edit().putString(KEY_BT_NAME, value).apply() }
 
     var autoArmOnBluetooth: Boolean
         get() = prefs.getBoolean(KEY_AUTO_ARM, true)
@@ -55,6 +60,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_TOKEN = "tessie_token"
         private const val KEY_VIN = "vin"
         private const val KEY_BT_ADDR = "car_bt_address"
+        private const val KEY_BT_NAME = "car_bt_name"
         private const val KEY_AUTO_ARM = "auto_arm_bt"
         private const val KEY_FIRE_ON_ARM = "fire_on_arm"
         private const val KEY_POLL = "poll_interval_s"
