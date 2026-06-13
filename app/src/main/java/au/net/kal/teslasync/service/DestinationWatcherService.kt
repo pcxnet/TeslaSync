@@ -50,11 +50,17 @@ class DestinationWatcherService : LifecycleService() {
             // recreated, it would just fail the same way.
             return START_NOT_STICKY
         }
+        isRunning = true
         if (pollJob?.isActive != true) {
             pollJob = lifecycleScope.launch { runPollLoop(this) }
         }
         // Restart if the OS kills us mid-drive; the loop re-reads settings on restart.
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        isRunning = false
+        super.onDestroy()
     }
 
     /**
@@ -200,6 +206,15 @@ class DestinationWatcherService : LifecycleService() {
 
         // Distinct from FGS_ID and CarBluetoothReceiver.TAP_TO_ARM_ID (2001).
         private const val FALLBACK_ID = 2002
+
+        /**
+         * Whether the watcher is currently running. Set when the foreground promote succeeds,
+         * cleared in onDestroy. Read by the UI to show "Watching" vs "Idle" — it's a best-effort
+         * snapshot (the UI re-reads it on resume), not a live-observable source of truth.
+         */
+        @Volatile
+        var isRunning: Boolean = false
+            private set
 
         /**
          * Start the watcher as a foreground service. Safe to call when already running.
