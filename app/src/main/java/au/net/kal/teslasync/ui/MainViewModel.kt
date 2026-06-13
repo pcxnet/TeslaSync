@@ -11,6 +11,7 @@ import au.net.kal.teslasync.data.SettingsRepository
 import au.net.kal.teslasync.data.TessieClient
 import au.net.kal.teslasync.data.TessieParser
 import au.net.kal.teslasync.data.VehicleSummary
+import au.net.kal.teslasync.service.DestinationWatcherService
 import au.net.kal.teslasync.update.ApkInstaller
 import au.net.kal.teslasync.update.UpdateChecker
 import au.net.kal.teslasync.update.UpdateInfo
@@ -61,6 +62,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var installingUpdate by mutableStateOf(false)
         private set
 
+    // Whether the watcher is currently running, and whether the chosen car is connected right
+    // now. Both are refreshed on screen resume — they drive the read-only status line that
+    // replaced the old manual Start/Stop button.
+    var watching by mutableStateOf(DestinationWatcherService.isRunning)
+        private set
+    var carConnected by mutableStateOf(false)
+        private set
+
     val isConfigured: Boolean get() = token.isNotBlank() && vin.isNotBlank()
 
     fun onTokenChange(value: String) { token = value }
@@ -77,9 +86,42 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // NB: not named setAutoArm/setFireOnArm — those JVM signatures collide with the
     // generated setters of the `autoArm`/`fireOnArm` state properties (platform clash).
-    fun onAutoArmChanged(value: Boolean) { autoArm = value; settings.autoArmOnBluetooth = value }
+    // With the manual Start/Stop button gone, this toggle is also the de-facto on/off switch:
+    // turning it off stops an active watch; turning it on arms immediately if already in the car.
+    fun onAutoArmChanged(value: Boolean) {
+        autoArm = value
+        settings.autoArmOnBluetooth = value
+        if (value) {
+            refreshConnectionAndMaybeArm()
+        } else {
+            DestinationWatcherService.stop(getApplication())
+            watching = false
+        }
+    }
 
     fun onFireOnArmChanged(value: Boolean) { fireOnArm = value; settings.fireOnArm = value }
+
+    /**
+     * Call when the config screen resumes. Reflects whether the watcher is running and, if the
+     * car is already connected (e.g. the phone rebooted mid-drive so the ACL_CONNECTED broadcast
+     * that normally arms us was missed), self-arms. The activity is in the foreground here, so
+     * the foreground-service start is exempt from the Android 12+ background-start restriction.
+     */
+    fun onScreenResumed() {
+        watching = DestinationWatcherService.isRunning
+        refreshConnectionAndMaybeArm()
+    }
+
+    private fun refreshConnectionAndMaybeArm() {
+        val mac = carBtAddress
+        if (mac.isNullOrBlank()) { carConnected = false; return }
+        BondedDevices.isCarConnected(getApplication(), mac) { connected ->
+            carConnected = connected
+            if (connected && isConfigured && autoArm && !DestinationWatcherService.isRunning) {
+                if (DestinationWatcherService.start(getApplication())) watching = true
+            }
+        }
+    }
 
     /** Loads the phone's paired devices for the car picker (call after BLUETOOTH_CONNECT). */
     fun loadBondedDevices() {

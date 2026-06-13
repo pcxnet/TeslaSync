@@ -65,6 +65,24 @@ MainActivity.kt
     start is still blocked, the receiver posts a high-priority "tap to start watching"
     notification — a notification tap is always exempt (`PendingIntent.getForegroundService`).
   - `DestinationWatcherService.start()` returns Boolean so the receiver knows to fall back.
+- **No manual "Start watching" button by design — arming is automatic.** The UI has no
+  start/stop control; watching is driven entirely by the car's Bluetooth. The auto-arm toggle is
+  the de-facto on/off switch (turning it off calls `stop()`). Don't re-add a manual button — it
+  was deliberately removed (2026-06-13) because "do I need to press this?" was confusing and the
+  whole point is hands-free. Two pieces make that safe:
+  - **Self-arm on app open.** `MainScreen` calls `vm.onScreenResumed()` on `ON_RESUME`; if the
+    car is currently connected (checked via `BondedDevices.isCarConnected`, an async A2DP
+    profile-proxy lookup — NOT hidden `BluetoothDevice.isConnected()` reflection) it starts the
+    watcher. This recovers the one gap the receiver can't: `ACTION_ACL_CONNECTED` only fires on
+    the connect *transition*, so a reboot-while-in-car would otherwise never arm. Opening the app
+    (foreground → no background-start restriction) is the recovery.
+  - **Read-only status line** ("● Watching" / "○ Idle" / "Auto-arm is off" / "Add token+VIN"),
+    fed by `DestinationWatcherService.isRunning` (a `@Volatile` companion flag) + `carConnected`,
+    refreshed on resume. It's a best-effort snapshot, not live-observable.
+- **Permission buttons are conditional.** The overlay + battery-optimisation buttons render only
+  when their permission is missing (`Settings.canDrawOverlays` / `PowerManager
+  .isIgnoringBatteryOptimizations`), re-checked on `ON_RESUME` so they vanish right after granting;
+  the whole "Permissions" section hides once both are granted.
 - **`active_route_*` only exists when a route is set**, and the car must be awake (Tessie's
   cached read avoids waking it). The poll loop treats null/empty/asleep as "no destination" and
   never crashes — it logs and continues.

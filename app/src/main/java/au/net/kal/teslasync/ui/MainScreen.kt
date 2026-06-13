@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,14 +39,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import au.net.kal.teslasync.BuildConfig
-import au.net.kal.teslasync.service.DestinationWatcherService
 
 @Composable
 fun MainScreen(vm: MainViewModel = viewModel()) {
     val context = LocalContext.current
-    var armed by remember { mutableStateOf(false) }
+
+    // Permission flags, re-checked on every resume so a button vanishes the moment its permission
+    // is granted in system settings and the user returns to the app.
+    var overlayOk by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var batteryOk by remember { mutableStateOf(isIgnoringBatteryOptimisation(context)) }
 
     val requestNotif = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -69,6 +75,14 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
 
     // Check GitHub Releases for a newer build when the screen opens.
     LaunchedEffect(Unit) { vm.checkForUpdate() }
+
+    // On resume: reflect watcher/connection state (self-arming if the car is already connected,
+    // e.g. after a reboot mid-drive) and refresh the permission flags.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        vm.onScreenResumed()
+        overlayOk = Settings.canDrawOverlays(context)
+        batteryOk = isIgnoringBatteryOptimisation(context)
+    }
 
     Column(
         modifier = Modifier
@@ -175,37 +189,42 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
             )
         }
 
-        // 4. Permissions -----------------------------------------------------
-        Section("4. Permissions")
-        OutlinedButton(onClick = { openOverlaySettings(context) }) {
-            Text("Allow display over other apps (one-tap Waze)")
-        }
-        OutlinedButton(onClick = { openBatterySettings(context) }) {
-            Text("Disable battery optimisation")
-        }
-
-        // 5. Manual control --------------------------------------------------
-        Section("5. Watch now")
-        Button(
-            enabled = vm.isConfigured,
-            onClick = {
-                if (armed) {
-                    DestinationWatcherService.stop(context)
-                    armed = false
-                } else {
-                    DestinationWatcherService.start(context)
-                    armed = true
+        // Permissions — only the ones still missing; the whole section hides once both are
+        // granted, and a button disappears as soon as you grant it (re-checked on resume).
+        if (!batteryOk || !overlayOk) {
+            Section("Permissions")
+            if (!batteryOk) {
+                OutlinedButton(onClick = { openBatterySettings(context) }) {
+                    Text("Disable battery optimisation")
                 }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (armed) "Stop watching" else "Start watching now") }
+            }
+            if (!overlayOk) {
+                OutlinedButton(onClick = { openOverlaySettings(context) }) {
+                    Text("Allow display over other apps (one-tap Waze)")
+                }
+            }
+        }
 
-        if (!vm.isConfigured) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Add a token and VIN to enable.",
-                style = MaterialTheme.typography.bodySmall,
+        // Status — read-only. Watching starts automatically when the car connects (or when you
+        // open the app already in the car); turn off auto-arm above to stop it.
+        Section("Status")
+        when {
+            !vm.isConfigured -> StatusLine(
+                text = "Add a token and VIN above to enable.",
                 color = MaterialTheme.colorScheme.error,
+            )
+            !vm.autoArm -> StatusLine(
+                text = "○ Auto-arm is off — turn it on above to watch automatically.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            vm.watching -> StatusLine(
+                text = "● Watching for a destination…",
+                color = MaterialTheme.colorScheme.primary,
+                subtitle = if (vm.carConnected) "Car connected via Bluetooth." else null,
+            )
+            else -> StatusLine(
+                text = "○ Idle — starts automatically when your car connects.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
@@ -223,6 +242,22 @@ private fun Section(title: String) {
     Spacer(Modifier.height(20.dp))
     Text(title, style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+private fun StatusLine(
+    text: String,
+    color: androidx.compose.ui.graphics.Color,
+    subtitle: String? = null,
+) {
+    Text(text, style = MaterialTheme.typography.bodyLarge, color = color)
+    if (subtitle != null) {
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 @Composable
@@ -295,6 +330,11 @@ private fun SwitchRow(
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
+}
+
+private fun isIgnoringBatteryOptimisation(context: android.content.Context): Boolean {
+    val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
+    return pm.isIgnoringBatteryOptimizations(context.packageName)
 }
 
 private fun openOverlaySettings(context: android.content.Context) {
