@@ -4,9 +4,12 @@
     <!-- Polls the Tessie cloud API. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Foreground service that runs the poll loop while armed. -->
+    <!-- Foreground service that runs the poll loop while armed. We run it as a
+         connectedDevice service (the car we auto-arm with over Bluetooth) because that FGS type
+         has NO Android-15 time cap — dataSync is capped at ~6h/24h and crashed the app once a
+         day's drives totalled 6h ("Time limit already exhausted for foreground service type
+         dataSync"). connectedDevice only requires that we hold BLUETOOTH_CONNECT, which we do. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <!-- Post the persistent + "navigate" notifications (runtime prompt on Android 13+). -->
@@ -55,7 +58,7 @@
         <service
             android:name=".service.DestinationWatcherService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|connectedDevice" />
+            android:foregroundServiceType="connectedDevice" />
 
         <!-- Auto-arm: the system delivers Bluetooth connect/disconnect broadcasts here even
              when the app isn't running (ACL_* are on the implicit-broadcast exception list).

@@ -71,9 +71,24 @@ MainActivity.kt
 - **Tessie envelope is assumed, not confirmed.** `TessieModels.kt` parses top-level
   `drive_state`. VERIFY against a real `/state` body (Step 0 curl) and adjust DTOs if Tessie
   wraps it differently. `/vehicles` parsing is best-effort with a manual-VIN fallback in the UI.
-- **Foreground service type = dataSync.** Declared `dataSync|connectedDevice` in the manifest;
-  started with `FOREGROUND_SERVICE_TYPE_DATA_SYNC`. Android 15 caps dataSync at ~6h/day, reset
-  when the service stops — fine for drive-length sessions (we stop on BT disconnect / manual).
+- **Foreground service type = connectedDevice (NOT dataSync — that crashed).** Declared
+  `connectedDevice` in the manifest and started with `FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE`.
+  - **Why not dataSync:** Android 15 caps the *timed* FGS types (`dataSync`, `mediaProcessing`)
+    at ~6h within a **rolling 24h budget**. That budget is **NOT** refunded when the service
+    stops — so "we always stop on BT disconnect" did NOT make it safe. Once a day's drives
+    totalled ~6h, the next arm threw `ForegroundServiceStartNotAllowedException: Time limit
+    already exhausted for foreground service type dataSync` from `startForeground`, crashing the
+    app (shipped bug, fixed 2026-06-13).
+  - **Why connectedDevice is correct:** the service exists to track the Bluetooth-connected car;
+    `connectedDevice` has **no** time cap and the OS only requires a qualifying permission
+    (`BLUETOOTH_CONNECT`, which we hold + `FOREGROUND_SERVICE_CONNECTED_DEVICE`). There is no
+    runtime "is a device connected" check, so manual-arm-without-the-car is still legal.
+  - **The crash was uncaught for a non-obvious reason:** `startForegroundService()` (in the
+    companion `start()`) succeeds and returns; the refusal is thrown later, in the system's
+    deferred `onStartCommand` dispatch — a different call stack the `start()` try/catch can't
+    reach. `startForegroundNotification()` now wraps `startForeground` in its own try/catch,
+    returns Boolean, and on refusal posts a tap-to-start notification (a notification tap is a
+    background-start exemption) and `stopSelf()`s instead of crashing.
 
 ## Version pins (single source: gradle/libs.versions.toml)
 

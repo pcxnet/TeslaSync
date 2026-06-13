@@ -43,7 +43,13 @@ class DestinationWatcherService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        startForegroundNotification("Watching for a destination…")
+        if (!startForegroundNotification("Watching for a destination…")) {
+            // The OS refused the foreground start (the throw is deferred into this
+            // onStartCommand dispatch, so the companion start()'s try/catch can't catch it).
+            // We've already posted a tap-to-start notification and stopped — don't ask to be
+            // recreated, it would just fail the same way.
+            return START_NOT_STICKY
+        }
         if (pollJob?.isActive != true) {
             pollJob = lifecycleScope.launch { runPollLoop(this) }
         }
@@ -52,11 +58,16 @@ class DestinationWatcherService : LifecycleService() {
     }
 
     /**
-     * Android 15 (API 35) caps a dataSync foreground service at ~6h/24h, then calls this and
-     * expects a prompt stop or it throws ForegroundServiceDidNotStopInTimeException. In normal
-     * use we stop well before this (on car disconnect / manual stop), but handle it cleanly.
-     * Launching dataSync is otherwise fine on 15 — only BOOT_COMPLETED launches are blocked,
-     * and we never start from boot.
+     * Android 15 (API 35) gives the *timed* FGS types (dataSync, mediaProcessing) a ~6h/24h
+     * budget, then calls this and expects a prompt stop or it throws
+     * ForegroundServiceDidNotStopInTimeException. We run as connectedDevice, which has NO time
+     * cap — so this should not fire for that reason. We keep the handler anyway so that if a
+     * timed type is ever added, the service stops cleanly instead of crashing.
+     *
+     * (We previously ran as dataSync and shipped a crash: once a day's drives totalled ~6h, the
+     * budget was exhausted and the next arm threw "Time limit already exhausted for foreground
+     * service type dataSync" from startForeground. The 6h is a rolling-24h budget, NOT refunded
+     * when the service stops — which is why "we always stop on disconnect" didn't save us.)
      */
     @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     override fun onTimeout(startId: Int, fgsType: Int) {
@@ -114,13 +125,53 @@ class DestinationWatcherService : LifecycleService() {
 
     // --- Foreground notification -------------------------------------------
 
-    private fun startForegroundNotification(text: String) {
+    /**
+     * Promote to a foreground service as CONNECTED_DEVICE — the car we auto-arm with over
+     * Bluetooth. connectedDevice has no Android-15 time cap (unlike dataSync, which used to
+     * crash the app once a day's drives totalled ~6h); the OS only requires that we hold a
+     * qualifying permission (BLUETOOTH_CONNECT), which we do.
+     *
+     * Returns false if the OS refused the start. That refusal is thrown into this
+     * onStartCommand dispatch — NOT into the companion start()'s startForegroundService() call —
+     * so we must catch it here. On refusal we post a tap-to-start notification (a notification
+     * tap is itself a background-start exemption) and stop, rather than crash.
+     */
+    private fun startForegroundNotification(text: String): Boolean = try {
         ServiceCompat.startForeground(
             this,
             FGS_ID,
             buildNotification(text),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
         )
+        true
+    } catch (e: Exception) {
+        Log.w(TAG, "Foreground start refused: ${e.message}")
+        postTapToStartNotification()
+        stopSelf()
+        false
+    }
+
+    /**
+     * Fallback when the OS refuses the foreground start: a high-priority notification whose tap
+     * restarts the service via getForegroundService (a notification tap is a background-start
+     * exemption, so the tap always succeeds).
+     */
+    private fun postTapToStartNotification() {
+        val restart = PendingIntent.getForegroundService(
+            this,
+            2,
+            Intent(this, DestinationWatcherService::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(this, TeslaSyncApp.CHANNEL_NAV)
+            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setContentTitle("TeslaSync needs a tap")
+            .setContentText("Tap to start watching for a Tesla destination")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(restart)
+            .build()
+        getSystemService<NotificationManager>()?.notify(FALLBACK_ID, notification)
     }
 
     private fun updateNotification(text: String) {
@@ -146,6 +197,9 @@ class DestinationWatcherService : LifecycleService() {
     companion object {
         private const val TAG = "DestWatcher"
         private const val FGS_ID = 1001
+
+        // Distinct from FGS_ID and CarBluetoothReceiver.TAP_TO_ARM_ID (2001).
+        private const val FALLBACK_ID = 2002
 
         /**
          * Start the watcher as a foreground service. Safe to call when already running.
